@@ -30,6 +30,9 @@ class Engine(threading.Thread):
         self.balance = {"ok": False}
         self.last_reset = None         # 上次从横幅读到的重置时刻，跨轮次缓存
         self.last_reset_clock = ""
+        self.goal_mode = C.GM_NONE
+        self.goal_end = None           # 目标终止（受阻/完成）的时间与模式
+        self._terminal_handled = None
 
     # ---------- 外部控制 ----------
 
@@ -106,6 +109,8 @@ class Engine(threading.Thread):
             "target_project": self.cfg.locked_project,
             "follow": bool(self.cfg.follow_open_thread),
             "balance": self.balance,
+            "goal_mode": self.goal_mode,
+            "goal_end": self.goal_end,
         }
         self.emit(payload)
 
@@ -116,6 +121,8 @@ class Engine(threading.Thread):
             self.balance = ratelimit.read_limits()
         except Exception as exc:
             self.balance = {"ok": False, "error": repr(exc)}
+
+        self.goal_mode = planner.goal_mode(snap, state)
 
         # 横幅有时会丢掉重置时刻，缓存上一次读到的值，避免调度逻辑跟着抖
         if snap.reset_at is not None:
@@ -170,6 +177,18 @@ class Engine(threading.Thread):
             self.prev_state = state
             return
 
+        # 目标已受阻或已完成：记录时间、通知一次、结束监控
+        if self.goal_mode in C.GM_TERMINAL:
+            if self._terminal_handled != self.goal_mode:
+                self._finish_monitor(snap, state)
+            else:
+                self.phase = C.PHASE_NEEDS_HUMAN
+                self._publish(snap, state)
+                self.due_at = time.time() + max(2, int(self.cfg.poll_seconds))
+            self.prev_state = state
+            return
+        self._terminal_handled = None
+
         plan = planner.plan_after_poll(snap, self.phase, self.prev_state, reader._now(), self.cfg)
         self.phase = plan["phase"]
         self._publish(snap, state)
@@ -195,6 +214,33 @@ class Engine(threading.Thread):
         else:
             self.due_at = time.time() + max(2, plan["due_in"])
         self.prev_state = state
+
+    def _finish_monitor(self, snap, state):
+        """目标受阻或已完成：记录时间、通知用户、关闭自动继续。"""
+        now = reader._now()
+        self._terminal_handled = self.goal_mode
+        self.goal_end = {
+            "mode": self.goal_mode,
+            "at": now.isoformat(timespec="seconds"),
+            "goal": snap.goal_status,
+        }
+        self.log.write("info", "goal_terminal", mode=self.goal_mode,
+                       at=now.isoformat(timespec="seconds"),
+                       goal=snap.goal_status, thread=snap.thread or None)
+
+        self.phase = C.PHASE_NEEDS_HUMAN
+        self._publish(snap, state)
+
+        lang = self.cfg.language
+        key = ("notify_goal_completed" if self.goal_mode == C.GM_COMPLETED
+               else "notify_goal_blocked")
+        self._notify(i18n.t(lang, "app_title"),
+                     i18n.t(lang, key, time=now.strftime("%H:%M")), "info")
+
+        self.set_enabled(False)
+        self.phase = C.PHASE_NEEDS_HUMAN
+        self.due_at = time.time() + 3600
+        self.emit({"type": "disabled", "reason": self.goal_mode})
 
     def _execute(self, manual=False):
         self.phase = C.PHASE_ACT

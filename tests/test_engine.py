@@ -111,6 +111,44 @@ def test_auto_failure_counts_and_halts():
     assert engine.phase == C.PHASE_NEEDS_HUMAN
 
 
+def test_completed_goal_stops_monitoring():
+    cfg = Config()
+    cfg.locked_project = "P"
+    cfg.locked_thread = "A"
+    engine, calls = make_engine(cfg, [Snap(ok=True, project="P", thread="A",
+                                           goal_status="已达成目标")])
+    engine._cycle()
+    assert calls["act"] == 0            # 绝不点恢复
+    assert engine.enabled is False      # 结束监控
+    assert engine.goal_end["mode"] == "completed"
+    assert engine.goal_end["at"]        # 记录了时间
+
+
+def test_blocked_goal_stops_monitoring():
+    cfg = Config()
+    cfg.locked_project = "P"
+    cfg.locked_thread = "A"
+    engine, calls = make_engine(cfg, [Snap(ok=True, project="P", thread="A",
+                                           goal_status="目标已停滞")])
+    engine._cycle()
+    assert calls["act"] == 0
+    assert engine.enabled is False
+    assert engine.goal_end["mode"] == "blocked"
+
+
+def test_stalled_by_quota_keeps_monitoring():
+    # 额度导致的停滞不算阻塞，必须继续等额度
+    cfg = Config()
+    cfg.locked_project = "P"
+    cfg.locked_thread = "A"
+    engine, _ = make_engine(cfg, [Snap(ok=True, project="P", thread="A",
+                                       goal_status="目标已停滞",
+                                       quota_msgs=["你已达到使用上限。稍后再试"])])
+    engine._cycle()
+    assert engine.enabled is True
+    assert engine.goal_end is None
+
+
 def run():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

@@ -27,8 +27,19 @@ GOAL_STALLED = "目标已停滞"
 GOAL_ACTIVE = "进行中的目标"
 GOAL_PAUSED = "已暂停的目标"
 GOAL_DONE = "已达成目标"
-GOAL_LABELS = (GOAL_STALLED, GOAL_ACTIVE, GOAL_PAUSED, GOAL_DONE,
-               "目标受限", "目标使用限制", "目标使用受限")
+GOAL_LIMITED = ("目标受限", "目标使用限制", "目标使用受限")
+GOAL_LABELS = (GOAL_STALLED, GOAL_ACTIVE, GOAL_PAUSED, GOAL_DONE) + GOAL_LIMITED
+
+# 目标模式（归一后的语义）
+GM_NONE = "none"
+GM_ACTIVE = "active"
+GM_PAUSED = "paused"
+GM_BLOCKED = "blocked"
+GM_COMPLETED = "completed"
+GM_LIMITED = "limited"
+GM_BLOCKED_BY_QUOTA = "blocked_by_quota"
+# 这两种不再自动推进：记录时间、通知、结束监控
+GM_TERMINAL = (GM_BLOCKED, GM_COMPLETED)
 
 # 目标动作按钮
 GOAL_RESUME = "恢复目标"

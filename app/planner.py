@@ -48,13 +48,38 @@ def choose_act(snap):
         return "none"                      # 已经在跑
     if status == C.GOAL_DONE:
         return "none"                      # 已达成，不再点
-    if status in (C.GOAL_STALLED, C.GOAL_PAUSED):
+    if status == C.GOAL_PAUSED:
         if C.GOAL_RESUME in snap.goal_actions:
             return "resume_goal"
         return "none"
+    if status == C.GOAL_STALLED:
+        # 停在额度上的停滞可以救；其它情况属于 blocked，由引擎拦下，不点
+        return "resume_goal" if C.GOAL_RESUME in snap.goal_actions else "none"
     if status in C.GOAL_LABELS:
         return "none"                      # 目标受限等，不擅自恢复
     return "send_continue"                 # 没有目标
+
+
+def goal_mode(snap, state):
+    """把客户端的目标文案归一成语义模式。
+
+    关键区分：因额度用尽而停滞的目标，不算 blocked。它还能救，等额度回来点恢复。
+    只有在额度正常、对话空闲时仍停滞，才算 agent 自己放弃了。
+    """
+    status = snap.goal_status
+    if not status:
+        return C.GM_NONE
+    if status == C.GOAL_ACTIVE:
+        return C.GM_ACTIVE
+    if status == C.GOAL_PAUSED:
+        return C.GM_PAUSED
+    if status == C.GOAL_DONE:
+        return C.GM_COMPLETED
+    if status in C.GOAL_LIMITED:
+        return C.GM_LIMITED
+    if status == C.GOAL_STALLED:
+        return C.GM_BLOCKED_BY_QUOTA if state == C.ST_QUOTA else C.GM_BLOCKED
+    return C.GM_NONE
 
 
 def should_attempt(snap, now, expect_reset_at=None, grace_seconds=0):

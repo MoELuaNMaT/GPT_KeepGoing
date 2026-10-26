@@ -173,6 +173,35 @@ def test_should_attempt_after_reset_even_with_stale_banner():
     assert planner.should_attempt(s, now, datetime(2026, 10, 27, 0, 45), 90) is True
 
 
+def test_goal_mode_active():
+    assert planner.goal_mode(snap(goal_status=C.GOAL_ACTIVE), C.ST_RUNNING) == C.GM_ACTIVE
+
+
+def test_goal_mode_paused():
+    assert planner.goal_mode(snap(goal_status=C.GOAL_PAUSED), C.ST_IDLE) == C.GM_PAUSED
+
+
+def test_goal_mode_completed():
+    assert planner.goal_mode(snap(goal_status=C.GOAL_DONE), C.ST_IDLE) == C.GM_COMPLETED
+
+
+def test_goal_mode_limited():
+    assert planner.goal_mode(snap(goal_status="目标受限"), C.ST_IDLE) == C.GM_LIMITED
+
+
+def test_stalled_by_quota_is_not_blocked():
+    # 昨天 00:45 的真实情况：额度耗尽导致停滞，这种还能救
+    assert planner.goal_mode(snap(goal_status=C.GOAL_STALLED), C.ST_QUOTA) == C.GM_BLOCKED_BY_QUOTA
+
+
+def test_stalled_without_quota_is_blocked():
+    assert planner.goal_mode(snap(goal_status=C.GOAL_STALLED), C.ST_IDLE) == C.GM_BLOCKED
+
+
+def test_goal_mode_none_without_goal():
+    assert planner.goal_mode(snap(), C.ST_IDLE) == C.GM_NONE
+
+
 def run():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

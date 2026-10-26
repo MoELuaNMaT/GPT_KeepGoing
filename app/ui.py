@@ -192,6 +192,8 @@ class Dashboard:
         self._i18n.append((self.lbl_status, "lbl_status"))
         self.lbl_state = tk.Label(mid, text="—", font=FONT_TITLE)
         self.lbl_state.pack(anchor="w", **pad)
+        self.lbl_goal = tk.Label(mid, text="", font=FONT_SMALL, fg="#6b7280")
+        self.lbl_goal.pack(anchor="w", **pad)
 
         quota = tk.Frame(self.root)
         quota.pack(fill="x", pady=(6, 0))
@@ -279,6 +281,7 @@ class Dashboard:
         self.root.title(i18n.t(self.lang, "app_title"))
         self._apply_language_texts()
         self._render_state_labels()
+        self._render_goal_label()
         self._render_balance(self.last_balance, getattr(self, "_quota_reset_at", None))
         self._render_hint()
 
@@ -421,6 +424,11 @@ class Dashboard:
                     self.lbl_hint.configure(text=self.banner_text)
                 elif kind == "cmd":
                     self._on_command(evt.get("cmd"))
+                elif kind == "disabled":
+                    self.var_resume.set(False)
+                    reason = evt.get("reason") or ""
+                    self._append("goal_terminal",
+                                 i18n.goal_text(self.lang, reason) if reason else "")
         except queue.Empty:
             pass
         self.root.after(200, self._drain)
@@ -441,9 +449,12 @@ class Dashboard:
         self._render_thread_labels(target or thread, evt.get("target_project") or evt.get("project"), thread)
         self._last_state = evt.get("state")
         self._last_phase = evt.get("phase")
+        self._last_goal_mode = evt.get("goal_mode") or C.GM_NONE
+        self._last_goal_end = evt.get("goal_end")
         self.last_reset_at = self._reset_from(evt)
         self._quota_reset_at = self.last_reset_at
         self._render_state_labels()
+        self._render_goal_label()
         self._render_balance(evt.get("balance") or {"ok": False}, self.last_reset_at)
         self._render_hint()
         if self.tray is not None:
@@ -477,6 +488,20 @@ class Dashboard:
                      self.last_reset_at.strftime("%Y-%m-%d %H:%M") + "）")
         elif state == C.ST_QUOTA:
             self.lbl_reset.configure(text=i18n.t(self.lang, "reset_unknown"), fg="#b45309")
+
+    def _render_goal_label(self):
+        """显示目标模式；受阻或完成时带上发生时间。"""
+        mode = getattr(self, "_last_goal_mode", C.GM_NONE) or C.GM_NONE
+        end = getattr(self, "_last_goal_end", None) or {}
+        text = i18n.goal_text(self.lang, mode)
+        if end.get("mode") == mode and end.get("at"):
+            when = _parse_iso(end["at"])
+            if when:
+                text = i18n.t(self.lang, "goal_ended", mode=text,
+                              time=when.strftime("%m-%d %H:%M"))
+        color = "#dc2626" if mode in C.GM_TERMINAL else "#6b7280"
+        prefix = i18n.t(self.lang, "goal_label_fmt", name=i18n.t(self.lang, "lbl_goal"))
+        self.lbl_goal.configure(text=prefix + text, fg=color)
 
     def _render_hint(self):
         target = self.cfg.locked_thread
