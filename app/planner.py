@@ -57,6 +57,19 @@ def choose_act(snap):
     return "send_continue"                 # 没有目标
 
 
+def should_attempt(snap, now, expect_reset_at=None, grace_seconds=0):
+    """过了重置时刻是否值得尝试一次继续。
+
+    横幅已知会滞留：重置后它可能还写着「额度已用完」。所以只要过了重置时刻，
+    就不能因为横幅而放弃；真正的判据是动作之后状态有没有变成运行中。
+    """
+    if not snap.quota_msgs:
+        return True
+    if expect_reset_at is None:
+        return False
+    return now >= expect_reset_at + _seconds(grace_seconds)
+
+
 def is_stale(snap, now, cfg):
     """界面可能没刷新：已过重置时刻但界面仍显示额度用尽。"""
     if not snap.quota_msgs:

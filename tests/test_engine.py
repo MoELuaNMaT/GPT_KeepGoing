@@ -36,8 +36,9 @@ def make_engine(cfg, snaps, act_result=None):
         calls["read"] += 1
         return snaps[min(calls["read"] - 1, len(snaps) - 1)]
 
-    def fake_act(cfg_, log_):
+    def fake_act(cfg_, log_, **kwargs):
         calls["act"] += 1
+        calls["expect_reset_at"] = kwargs.get("expect_reset_at")
         return act_result or {"ok": True, "action": "resume_goal", "detail": "stub"}
 
     engmod.reader.read = fake_read

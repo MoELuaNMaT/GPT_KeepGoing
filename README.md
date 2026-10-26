@@ -60,6 +60,7 @@ Language names are always written in their own script.
 | Running | Waits. Continues when the task ends. |
 | Quota exhausted, reset time known | Sleeps until the reset time, then continues. |
 | Quota exhausted, no reset time | Checks every minute until quota returns. |
+| Reset time passed, banner still says exhausted | Still tries to continue, then checks whether the task actually started. The banner is known to lag. |
 | Waiting for permission | **Does nothing.** Sends a notification instead. |
 | Waiting for your reply | **Does nothing.** Sends a notification instead. |
 | Idle | Waits. |

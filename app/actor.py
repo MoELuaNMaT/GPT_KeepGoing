@@ -92,6 +92,51 @@ def find_button(win, name):
     return None
 
 
+def _invoke(ctrl):
+    """尽力点中一个控件，返回用了哪种方式；失败返回空串。"""
+    try:
+        if not ctrl.IsEnabled:
+            return ""
+    except Exception:
+        pass
+    try:
+        ctrl.GetInvokePattern().Invoke()
+        return "invoke"
+    except Exception:
+        pass
+    try:
+        ctrl.Click(simulateMove=False)
+        return "click"
+    except Exception:
+        pass
+    try:
+        x, y = ctrl.GetClickablePoint()
+        auto.Click(x, y)
+        return "mouse"
+    except Exception:
+        return ""
+
+
+def invoke_resume_goal(win):
+    """点「恢复目标」。名字可能有变体，按精确 → 变体 → 模糊三级尝试。"""
+    for name in (C.GOAL_RESUME, C.GOAL_RESUME_CONFIRM, "继续目标", "恢复"):
+        ctrl = find_button(win, name)
+        if ctrl is not None:
+            how = _invoke(ctrl)
+            if how:
+                return how
+    for ctrl in _buttons(win):
+        try:
+            name = ctrl.Name or ""
+        except Exception:
+            continue
+        if len(name) <= 16 and "恢复" in name and "目标" in name:
+            how = _invoke(ctrl)
+            if how:
+                return how
+    return ""
+
+
 def click_button(win, name):
     """按名字点按钮。返回是否点到。"""
     ctrl = find_button(win, name)
@@ -250,8 +295,12 @@ def refresh_ladder(cfg, log, target_thread):
     return False, "L1/L2", snap
 
 
-def run_act(cfg, log):
-    """执行一次继续。返回 dict(ok, action, detail)。"""
+def run_act(cfg, log, expect_reset_at=None):
+    """执行一次继续。返回 dict(ok, action, detail)。
+
+    expect_reset_at 是调度器记录的重置时刻。过了这个时刻，即使横幅还写着
+    「额度已用完」（已知会滞留），也要尝试动作，用结果来判定成功与否。
+    """
     hwnd = discovery.find_hwnd()
     if not hwnd:
         return {"ok": False, "action": "none", "detail": "客户端未运行"}
@@ -269,12 +318,18 @@ def run_act(cfg, log):
         snap = reader.read()
 
     # 2) 界面若陈旧，先强制刷新
-    if planner.is_stale(snap, reader._now(), cfg):
+    now = reader._now()
+    passed = expect_reset_at is not None and now >= expect_reset_at
+    if planner.is_stale(snap, now, cfg) or (passed and snap.quota_msgs):
         ok, level, snap = refresh_ladder(cfg, log, cfg.locked_thread or snap.thread)
 
-    # 3) 前置条件
-    if snap.quota_msgs:
+    # 3) 前置条件：过了重置时刻就尝试，不再被滞留的横幅挡住
+    if not planner.should_attempt(snap, now, expect_reset_at, cfg.stale_grace_seconds):
         return {"ok": False, "action": "none", "detail": "额度仍显示用尽"}
+    if snap.quota_msgs:
+        log.write("warn", "act_stale_banner",
+                  detail="横幅仍显示用尽，但已过重置时刻，仍然尝试",
+                  reset_at=str(expect_reset_at))
     if not snap.composer_empty:
         return {"ok": False, "action": "none", "detail": "输入框有草稿，跳过"}
 
@@ -287,15 +342,19 @@ def run_act(cfg, log):
         return {"ok": False, "action": action, "detail": "客户端未运行"}
 
     if action == "resume_goal":
-        if not click_button(win, C.GOAL_RESUME):
+        how = invoke_resume_goal(win)
+        if not how:
+            log.write("error", "goal_resume_fail", detail="找不到可点的恢复目标按钮")
             return {"ok": False, "action": action, "detail": "点不到恢复目标"}
-        time.sleep(1.2)
+        log.write("info", "goal_resume_clicked", detail=how)
+        time.sleep(1.5)
         # 可能弹确认框
         win2 = discovery.find_window()
         if win2 is not None and find_button(win2, C.GOAL_RESUME_CONFIRM) is not None:
-            click_button(win2, C.GOAL_RESUME_CONFIRM)
-            log.write("info", "goal_resume_confirmed")
-        return {"ok": True, "action": action, "detail": "点击恢复目标"}
+            if click_button(win2, C.GOAL_RESUME_CONFIRM):
+                log.write("info", "goal_resume_confirmed")
+                time.sleep(0.8)
+        return {"ok": True, "action": action, "detail": "点击恢复目标（" + how + "）"}
 
     # 无目标：输入继续并发送
     text = cfg.continue_text or "继续"

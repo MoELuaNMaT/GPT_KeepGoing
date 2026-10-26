@@ -28,6 +28,8 @@ class Engine(threading.Thread):
         self._manual = False
         self.snap = None
         self.balance = {"ok": False}
+        self.last_reset = None         # 上次从横幅读到的重置时刻，跨轮次缓存
+        self.last_reset_clock = ""
 
     # ---------- 外部控制 ----------
 
@@ -115,6 +117,17 @@ class Engine(threading.Thread):
         except Exception as exc:
             self.balance = {"ok": False, "error": repr(exc)}
 
+        # 横幅有时会丢掉重置时刻，缓存上一次读到的值，避免调度逻辑跟着抖
+        if snap.reset_at is not None:
+            self.last_reset = snap.reset_at
+            self.last_reset_clock = snap.reset_clock
+        elif state == C.ST_QUOTA and self.last_reset is not None:
+            snap.reset_at = self.last_reset
+            snap.reset_clock = self.last_reset_clock
+        elif state != C.ST_QUOTA:
+            self.last_reset = None
+            self.last_reset_clock = ""
+
         # 开关关闭：只做展示，不参与决策，也不动作
         if not self.enabled:
             self.phase = C.PHASE_OFF
@@ -186,7 +199,7 @@ class Engine(threading.Thread):
     def _execute(self, manual=False):
         self.phase = C.PHASE_ACT
         self.emit({"type": "phase", "phase": self.phase, "phase_text": "正在执行继续"})
-        res = actor.run_act(self.cfg, self.log)
+        res = actor.run_act(self.cfg, self.log, expect_reset_at=self.last_reset)
         level = "info" if res["ok"] else "warn"
         self.log.write(level, "act", action=res["action"], ok=res["ok"],
                        detail=res["detail"], manual=manual or None)

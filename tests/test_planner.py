@@ -145,6 +145,34 @@ def test_quota_text_short_rejected():
     assert planner.is_quota_text("额度", False) is False
 
 
+def test_should_attempt_when_no_quota():
+    from datetime import datetime
+    now = datetime(2026, 10, 27, 0, 50)
+    assert planner.should_attempt(snap(), now) is True
+
+
+def test_should_not_attempt_when_quota_and_no_reset():
+    from datetime import datetime
+    now = datetime(2026, 10, 27, 0, 50)
+    s = snap(quota_msgs=["或稍后再试"])
+    assert planner.should_attempt(s, now, None) is False
+
+
+def test_should_not_attempt_before_reset():
+    from datetime import datetime
+    now = datetime(2026, 10, 27, 0, 40)
+    s = snap(quota_msgs=["于 00:45 重置"])
+    assert planner.should_attempt(s, now, datetime(2026, 10, 27, 0, 45), 90) is False
+
+
+def test_should_attempt_after_reset_even_with_stale_banner():
+    # 真实故障：重置后横幅仍显示用尽，旧逻辑因此放弃点击
+    from datetime import datetime
+    now = datetime(2026, 10, 27, 0, 46, 32)
+    s = snap(quota_msgs=["你已达到使用上限。升级套餐或充值额度以继续，或稍后再试。"])
+    assert planner.should_attempt(s, now, datetime(2026, 10, 27, 0, 45), 90) is True
+
+
 def run():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]
