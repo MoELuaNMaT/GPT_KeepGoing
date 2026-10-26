@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# PyInstaller
+build/
+dist/
+
+# 本地原型脚本（已被 app/ 取代）
+cgpt_client.py
+
+# 编辑器
+.vscode/
+.idea/
