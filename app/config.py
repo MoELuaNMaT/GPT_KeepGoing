@@ -38,6 +38,7 @@ class Config:
     log_retention_days: int = 30
     continue_text: str = "继续"
     language: str = "zh-CN"
+    blocked_confirm_polls: int = 3
     follow_open_thread: bool = False
     autostart: bool = False
     notify_enabled: bool = True

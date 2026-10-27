@@ -125,15 +125,20 @@ def test_completed_goal_stops_monitoring():
     assert engine.goal_end["at"]        # 记录了时间
 
 
-def test_blocked_goal_stops_monitoring():
+def test_blocked_goal_needs_three_polls():
+    # 一次观测就放弃是错的：必须连续确认
+    from datetime import datetime
     cfg = Config()
     cfg.locked_project = "P"
     cfg.locked_thread = "A"
     engine, calls = make_engine(cfg, [Snap(ok=True, project="P", thread="A",
                                            goal_status="目标已停滞")])
     engine._cycle()
-    assert calls["act"] == 0
-    assert engine.enabled is False
+    assert engine.enabled is True        # 第 1 次：不动
+    engine._cycle()
+    assert engine.enabled is True        # 第 2 次：仍不动
+    engine._cycle()
+    assert engine.enabled is False       # 第 3 次：才结束
     assert engine.goal_end["mode"] == "blocked"
 
 
@@ -173,6 +178,38 @@ def test_limited_without_quota_notifies_only():
     assert calls["act"] == 0            # 不替用户点恢复
     assert engine.enabled is True       # 但继续监控
     assert engine.goal_end is None
+
+
+def test_blocked_with_pending_reset_does_not_terminate():
+    # 还有已知的重置时刻 → 绝不结束，等到点再试
+    from datetime import datetime, timedelta
+    cfg = Config()
+    cfg.locked_project = "P"
+    cfg.locked_thread = "A"
+    reset = datetime.now().astimezone() + timedelta(minutes=30)
+    snap = Snap(ok=True, project="P", thread="A", goal_status="目标已停滞",
+                quota_msgs=["于 15:45 重置"], reset_at=reset, reset_clock="15:45")
+    engine, _ = make_engine(cfg, [snap])
+    for _ in range(6):
+        engine._cycle()
+    assert engine.enabled is True
+    assert engine.goal_end is None
+
+
+def test_blocked_attempts_once_at_reset_time():
+    # 到点即使被判为受阻，也要强试一次恢复
+    from datetime import datetime, timedelta
+    cfg = Config()
+    cfg.locked_project = "P"
+    cfg.locked_thread = "A"
+    engine, calls = make_engine(
+        cfg, [Snap(ok=True, project="P", thread="A", goal_status="目标已停滞")],
+        act_result={"ok": False, "action": "resume_goal", "detail": "stub 失败"})
+    engine.last_reset = datetime.now().astimezone() - timedelta(minutes=5)
+    engine._cycle()
+    assert calls["act"] == 1
+    assert engine._reset_attempted is True   # 本轮只强试一次
+    assert engine.enabled is True            # 强试不结束监控
 
 
 def run():

@@ -65,7 +65,8 @@ Language names are always written in their own script.
 | Waiting for your reply | **Does nothing.** Sends a notification instead. |
 | Idle | Waits. |
 | Goal paused, or stalled by the quota | Continues when the limit resets or the task ends. |
-| Goal blocked, or completed | Records the time, notifies you, and turns itself off. It never clicks Resume on a blocked goal. |
+| Goal completed | Records the time, notifies you, and turns itself off. |
+| Goal blocked | Confirmed over 3 checks before it turns itself off. If a reset time is still pending it keeps waiting and tries Resume once at that time. |
 
 The app never approves a permission request for you, and never sends a message when
 the composer already has a draft.

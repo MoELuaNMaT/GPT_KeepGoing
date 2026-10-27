@@ -411,27 +411,40 @@ class Dashboard:
     def _drain(self):
         try:
             while True:
-                evt = self.events.get_nowait()
-                kind = evt.get("type")
-                if kind == "snapshot":
-                    self._on_snapshot(evt)
-                elif kind == "log":
-                    rec = evt["record"]
-                    self._append(rec.get("event", ""), self._summarize(rec),
-                                 ts=rec.get("ts", ""), level=rec.get("level", "info"))
-                elif kind == "banner":
-                    self.banner_text = evt.get("text", "")
-                    self.lbl_hint.configure(text=self.banner_text)
-                elif kind == "cmd":
-                    self._on_command(evt.get("cmd"))
-                elif kind == "disabled":
-                    self.var_resume.set(False)
-                    reason = evt.get("reason") or ""
-                    self._append("goal_terminal",
-                                 i18n.goal_text(self.lang, reason) if reason else "")
-        except queue.Empty:
-            pass
-        self.root.after(200, self._drain)
+                try:
+                    evt = self.events.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    self._handle_event(evt)
+                except Exception as exc:
+                    # 单条事件出错不能拖垮整个界面刷新循环
+                    try:
+                        self._append("ui_error", repr(exc)[:120])
+                    except Exception:
+                        pass
+        finally:
+            self.root.after(200, self._drain)
+
+    def _handle_event(self, evt):
+        """处理一条事件。异常由 _drain 捕获，不影响后续刷新。"""
+        kind = evt.get("type")
+        if kind == "snapshot":
+            self._on_snapshot(evt)
+        elif kind == "log":
+            rec = evt["record"]
+            self._append(rec.get("event", ""), self._summarize(rec),
+                         ts=rec.get("ts", ""), level=rec.get("level", "info"))
+        elif kind == "banner":
+            self.banner_text = evt.get("text", "")
+            self.lbl_hint.configure(text=self.banner_text)
+        elif kind == "cmd":
+            self._on_command(evt.get("cmd"))
+        elif kind == "disabled":
+            self.var_resume.set(False)
+            reason = evt.get("reason") or ""
+            self._append("goal_terminal",
+                         i18n.goal_text(self.lang, reason) if reason else "")
 
     def _on_command(self, cmd):
         if cmd == "show":
@@ -444,6 +457,9 @@ class Dashboard:
 
     def _on_snapshot(self, evt):
         self.last_snapshot = evt
+        # 勾选框以引擎实际状态为准：即使 disabled 事件丢了，下一轮也会自动纠正
+        if self.var_resume.get() != bool(self.engine.enabled):
+            self.var_resume.set(bool(self.engine.enabled))
         thread = evt.get("thread") or ""
         target = evt.get("target") or ""
         self._render_thread_labels(target or thread, evt.get("target_project") or evt.get("project"), thread)

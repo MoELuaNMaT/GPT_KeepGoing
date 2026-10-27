@@ -34,6 +34,8 @@ class Engine(threading.Thread):
         self.goal_end = None           # 目标终止（受阻/完成）的时间与模式
         self._terminal_handled = None
         self._limited_notified = None
+        self._blocked_polls = 0        # 连续观测到"受阻"的次数
+        self._reset_attempted = False  # 本轮重置时刻是否已经强试过
 
     # ---------- 外部控制 ----------
 
@@ -127,14 +129,15 @@ class Engine(threading.Thread):
 
         # 横幅有时会丢掉重置时刻，缓存上一次读到的值，避免调度逻辑跟着抖
         if snap.reset_at is not None:
+            if snap.reset_at != self.last_reset:
+                self._reset_attempted = False      # 新窗口，允许再强试一次
             self.last_reset = snap.reset_at
             self.last_reset_clock = snap.reset_clock
         elif state == C.ST_QUOTA and self.last_reset is not None:
             snap.reset_at = self.last_reset
             snap.reset_clock = self.last_reset_clock
-        elif state != C.ST_QUOTA:
-            self.last_reset = None
-            self.last_reset_clock = ""
+        # 注意：额度横幅消失时不要清掉 last_reset。
+        # 它还要用来判断"到点强试一次"，只在成功恢复后才清空。
 
         # 开关关闭：只做展示，不参与决策，也不动作
         if not self.enabled:
@@ -178,8 +181,24 @@ class Engine(threading.Thread):
             self.prev_state = state
             return
 
+        # 兜底：到了重置时刻，即使目标被判为受阻，也强试一次恢复
+        if (self.goal_mode == C.GM_BLOCKED and self.last_reset is not None
+                and not self._reset_attempted and reader._now() >= self.last_reset):
+            self._reset_attempted = True
+            self.log.write("info", "blocked_reset_attempt", reset_at=str(self.last_reset),
+                           goal=snap.goal_status)
+            self._execute(manual=False)
+            self.prev_state = state
+            return
+
+        # 连续观测计数：受阻状态必须稳定才算真受阻
+        if self.goal_mode == C.GM_BLOCKED:
+            self._blocked_polls += 1
+        else:
+            self._blocked_polls = 0
+
         # 目标已受阻或已完成：记录时间、通知一次、结束监控
-        if self.goal_mode in C.GM_TERMINAL:
+        if self._should_terminate(snap):
             if self._terminal_handled != self.goal_mode:
                 self._finish_monitor(snap, state)
             else:
@@ -231,6 +250,23 @@ class Engine(threading.Thread):
             self.due_at = time.time() + max(2, plan["due_in"])
         self.prev_state = state
 
+    def _should_terminate(self, snap):
+        """是否该结束监控。
+
+        已完成：立刻结束，这是终局。
+        受阻：不能只凭一次观测就放弃——
+          1) 只要还有已知的额度重置时刻（未到或刚到），就不结束，等到点再试一次；
+          2) 没有额度线索时，需连续 blocked_confirm_polls 次观测到受阻才结束。
+        """
+        if self.goal_mode == C.GM_COMPLETED:
+            return True
+        if self.goal_mode != C.GM_BLOCKED:
+            return False
+        if self.last_reset is not None:
+            return False
+        limit = max(1, int(getattr(self.cfg, "blocked_confirm_polls", 3)))
+        return self._blocked_polls >= limit
+
     def _finish_monitor(self, snap, state):
         """目标受阻或已完成：记录时间、通知用户、关闭自动继续。"""
         now = reader._now()
@@ -269,6 +305,9 @@ class Engine(threading.Thread):
 
         if res["ok"]:
             self.attempts = 0
+            self.last_reset = None          # 已恢复，旧的时刻作废
+            self.last_reset_clock = ""
+            self._reset_attempted = False
             self.phase = C.PHASE_COOLDOWN
             self.due_at = time.time() + int(self.cfg.cooldown_seconds)
             return
