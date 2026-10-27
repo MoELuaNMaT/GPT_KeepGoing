@@ -55,8 +55,11 @@ def choose_act(snap):
     if status == C.GOAL_STALLED:
         # 停在额度上的停滞可以救；其它情况属于 blocked，由引擎拦下，不点
         return "resume_goal" if C.GOAL_RESUME in snap.goal_actions else "none"
+    if status in C.GOAL_LIMITED:
+        # 走到这里说明引擎已判定可以动作（额度已恢复）；受限目标也点恢复
+        return "resume_goal" if C.GOAL_RESUME in snap.goal_actions else "none"
     if status in C.GOAL_LABELS:
-        return "none"                      # 目标受限等，不擅自恢复
+        return "none"                      # 其余未知目标状态，不擅自恢复
     return "send_continue"                 # 没有目标
 
 
@@ -76,7 +79,8 @@ def goal_mode(snap, state):
     if status == C.GOAL_DONE:
         return C.GM_COMPLETED
     if status in C.GOAL_LIMITED:
-        return C.GM_LIMITED
+        # 额度用尽时客户端也会显示「目标受限」，这种和停滞一样，等额度回来还能救
+        return C.GM_LIMITED_BY_QUOTA if state == C.ST_QUOTA else C.GM_LIMITED
     if status == C.GOAL_STALLED:
         return C.GM_BLOCKED_BY_QUOTA if state == C.ST_QUOTA else C.GM_BLOCKED
     return C.GM_NONE

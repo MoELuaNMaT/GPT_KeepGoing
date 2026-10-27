@@ -202,6 +202,20 @@ def test_goal_mode_none_without_goal():
     assert planner.goal_mode(snap(), C.ST_IDLE) == C.GM_NONE
 
 
+def test_limited_by_quota_is_resumable():
+    # 额度用尽时客户端也会显示「目标受限」，这种等额度回来还能救
+    assert planner.goal_mode(snap(goal_status="目标受限"), C.ST_QUOTA) == C.GM_LIMITED_BY_QUOTA
+
+
+def test_limited_without_quota_stays_limited():
+    assert planner.goal_mode(snap(goal_status="目标受限"), C.ST_IDLE) == C.GM_LIMITED
+
+
+def test_choose_act_resumes_limited_goal():
+    s = snap(goal_status="目标受限", goal_actions=[C.GOAL_RESUME, C.GOAL_CLEAR])
+    assert planner.choose_act(s) == "resume_goal"
+
+
 def run():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

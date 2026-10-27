@@ -39,6 +39,7 @@ def make_engine(cfg, snaps, act_result=None):
     def fake_act(cfg_, log_, **kwargs):
         calls["act"] += 1
         calls["expect_reset_at"] = kwargs.get("expect_reset_at")
+        calls["force"] = kwargs.get("force")
         return act_result or {"ok": True, "action": "resume_goal", "detail": "stub"}
 
     engmod.reader.read = fake_read
@@ -146,6 +147,31 @@ def test_stalled_by_quota_keeps_monitoring():
                                        quota_msgs=["你已达到使用上限。稍后再试"])])
     engine._cycle()
     assert engine.enabled is True
+    assert engine.goal_end is None
+
+
+def test_limited_by_quota_keeps_monitoring():
+    cfg = Config()
+    cfg.locked_project = "P"
+    cfg.locked_thread = "A"
+    engine, calls = make_engine(cfg, [Snap(ok=True, project="P", thread="A",
+                                           goal_status="目标受限",
+                                           quota_msgs=["你已达到使用上限。稍后再试"])])
+    engine._cycle()
+    assert engine.enabled is True       # 没结束监控
+    assert calls["act"] == 0            # 额度没恢复前不动作
+    assert engine.goal_end is None      # 不算终态
+
+
+def test_limited_without_quota_notifies_only():
+    cfg = Config()
+    cfg.locked_project = "P"
+    cfg.locked_thread = "A"
+    engine, calls = make_engine(cfg, [Snap(ok=True, project="P", thread="A",
+                                           goal_status="目标受限")])
+    engine._cycle()
+    assert calls["act"] == 0            # 不替用户点恢复
+    assert engine.enabled is True       # 但继续监控
     assert engine.goal_end is None
 
 

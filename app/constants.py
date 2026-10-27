@@ -38,8 +38,11 @@ GM_BLOCKED = "blocked"
 GM_COMPLETED = "completed"
 GM_LIMITED = "limited"
 GM_BLOCKED_BY_QUOTA = "blocked_by_quota"
+GM_LIMITED_BY_QUOTA = "limited_by_quota"
 # 这两种不再自动推进：记录时间、通知、结束监控
 GM_TERMINAL = (GM_BLOCKED, GM_COMPLETED)
+# 只通知、不动作，但继续监控（非额度造成的受限，不该替用户点恢复）
+GM_NOTIFY_ONLY = (GM_LIMITED,)
 
 # 目标动作按钮
 GOAL_RESUME = "恢复目标"

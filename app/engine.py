@@ -33,6 +33,7 @@ class Engine(threading.Thread):
         self.goal_mode = C.GM_NONE
         self.goal_end = None           # 目标终止（受阻/完成）的时间与模式
         self._terminal_handled = None
+        self._limited_notified = None
 
     # ---------- 外部控制 ----------
 
@@ -189,6 +190,21 @@ class Engine(threading.Thread):
             return
         self._terminal_handled = None
 
+        # 非额度造成的「目标受限」：只通知一次，不替用户点恢复，但继续监控
+        if self.goal_mode in C.GM_NOTIFY_ONLY:
+            self.phase = C.PHASE_NEEDS_HUMAN
+            self._publish(snap, state)
+            if self._limited_notified != snap.goal_status:
+                self._limited_notified = snap.goal_status
+                lang = self.cfg.language
+                self._notify(i18n.t(lang, "app_title"),
+                             i18n.t(lang, "notify_goal_limited"), "warn")
+                self.log.write("warn", "goal_limited", goal=snap.goal_status)
+            self.due_at = time.time() + max(2, int(self.cfg.poll_seconds))
+            self.prev_state = state
+            return
+        self._limited_notified = None
+
         plan = planner.plan_after_poll(snap, self.phase, self.prev_state, reader._now(), self.cfg)
         self.phase = plan["phase"]
         self._publish(snap, state)
@@ -245,7 +261,8 @@ class Engine(threading.Thread):
     def _execute(self, manual=False):
         self.phase = C.PHASE_ACT
         self.emit({"type": "phase", "phase": self.phase, "phase_text": "正在执行继续"})
-        res = actor.run_act(self.cfg, self.log, expect_reset_at=self.last_reset)
+        res = actor.run_act(self.cfg, self.log, expect_reset_at=self.last_reset,
+                            force=manual)
         level = "info" if res["ok"] else "warn"
         self.log.write(level, "act", action=res["action"], ok=res["ok"],
                        detail=res["detail"], manual=manual or None)

@@ -295,7 +295,7 @@ def refresh_ladder(cfg, log, target_thread):
     return False, "L1/L2", snap
 
 
-def run_act(cfg, log, expect_reset_at=None):
+def run_act(cfg, log, expect_reset_at=None, force=False):
     """执行一次继续。返回 dict(ok, action, detail)。
 
     expect_reset_at 是调度器记录的重置时刻。过了这个时刻，即使横幅还写着
@@ -324,8 +324,11 @@ def run_act(cfg, log, expect_reset_at=None):
         ok, level, snap = refresh_ladder(cfg, log, cfg.locked_thread or snap.thread)
 
     # 3) 前置条件：过了重置时刻就尝试，不再被滞留的横幅挡住
-    if not planner.should_attempt(snap, now, expect_reset_at, cfg.stale_grace_seconds):
+    if not force and not planner.should_attempt(snap, now, expect_reset_at,
+                                                cfg.stale_grace_seconds):
         return {"ok": False, "action": "none", "detail": "额度仍显示用尽"}
+    if force and snap.quota_msgs:
+        log.write("warn", "act_forced", detail="手动触发，跳过额度闸门")
     if snap.quota_msgs:
         log.write("warn", "act_stale_banner",
                   detail="横幅仍显示用尽，但已过重置时刻，仍然尝试",
