@@ -35,6 +35,11 @@ RESET_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})")
 
 # 只有出现这些词才认为是在说重置时间，避免把正文里的时刻当重置时间
 RESET_HINT_WORDS = ("重置", "后重试", "retry", "resets", "reset at")
+
+# 只有时刻没有日期时，客户端指的是"本窗口的下一次重置"。
+# 若该时刻已经过去，说明横幅是上一次窗口留下的旧值：按窗口长度向前滚，
+# 直到落在未来。按"次日"算是错的——那会让应用干等 20 小时（实测事故）。
+DEFAULT_WINDOW_MINUTES = 300
 PROJECT_RE = re.compile(r"^项目：(.+)$")
 CONTEXT_RE = re.compile(r"^上下文用量：(\d+)%$")
 GOAL_ELAPSED_RE = re.compile(r"(\d+d \d+h \d+m \d+s)$")
@@ -291,8 +296,9 @@ def parse_reset_time(text, now):
     if m:
         hour, minute = int(m.group(1)), int(m.group(2))
         target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if target <= now:
-            target = target + timedelta(days=1)
-        return target, m.group(0).strip()
+        # 已过则按窗口长度向前滚，而不是推到次日
+        while target <= now:
+            target = target + timedelta(minutes=DEFAULT_WINDOW_MINUTES)
+        return target, target.strftime("%H:%M")
 
     return None, ""

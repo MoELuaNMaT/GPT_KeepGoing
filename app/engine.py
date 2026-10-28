@@ -232,6 +232,8 @@ class Engine(threading.Thread):
                        read_ms=snap.read_ms,
                        thread=snap.thread or None,
                        reset_clock=snap.reset_clock or None,
+                       reset_at=(snap.reset_at.isoformat(timespec="minutes")
+                                 if snap.reset_at else None),
                        goal_status=snap.goal_status or None)
 
         # 通知去重

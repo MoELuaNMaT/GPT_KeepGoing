@@ -93,11 +93,26 @@ def test_parse_reset_cjk_without_year():
     assert (dt.month, dt.day, dt.hour, dt.minute) == (10, 27, 0, 45)
 
 
-def test_parse_reset_time_only_rolls_to_next_day():
+def test_parse_reset_time_only_rolls_by_window():
+    # 2026-10-28 06:42 读到 "02:53"：该时刻已过 4 小时，
+    # 旧实现按"次日"算成 20 小时后，导致整夜干等。现在按 5 小时窗口向前滚。
+    from datetime import datetime
     from app.reader import parse_reset_time
-    dt, text = parse_reset_time("请在 19:37 后重试", _now())
+    now = datetime(2026, 10, 28, 6, 42).astimezone()
+    dt, clock = parse_reset_time("或在 02:53后重试", now)
     assert dt is not None
-    assert dt.day == 27 and dt.hour == 19 and dt.minute == 37
+    assert (dt.day, dt.hour, dt.minute) == (28, 7, 53)
+    assert clock == "07:53"
+    assert (dt - now).total_seconds() < 2 * 3600      # 不再等 20 小时
+
+
+def test_parse_reset_time_only_keeps_future_clock():
+    from datetime import datetime
+    from app.reader import parse_reset_time
+    now = datetime(2026, 10, 27, 19, 0).astimezone()
+    dt, clock = parse_reset_time("请在 19:37 后重试", now)
+    assert (dt.day, dt.hour, dt.minute) == (27, 19, 37)
+    assert clock == "19:37"
 
 
 def test_parse_reset_iso():
