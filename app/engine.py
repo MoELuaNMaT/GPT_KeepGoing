@@ -129,10 +129,25 @@ class Engine(threading.Thread):
 
         # 横幅有时会丢掉重置时刻，缓存上一次读到的值，避免调度逻辑跟着抖
         if snap.reset_at is not None:
-            if snap.reset_at != self.last_reset:
-                self._reset_attempted = False      # 新窗口，允许再强试一次
-            self.last_reset = snap.reset_at
-            self.last_reset_clock = snap.reset_clock
+            if (self.last_reset is not None and snap.reset_at > self.last_reset
+                    and snap.reset_src == getattr(self, "_reset_src", None)):
+                # Zelfde banner als eerst; de parser heeft de tijd alleen een
+                # venster doorgeschoven omdat het moment net voorbij is.
+                # Het oorspronkelijke moment blijft gelden, anders wordt er nooit hervat.
+                snap.reset_at = self.last_reset
+                snap.reset_clock = self.last_reset_clock
+            else:
+                passed = planner.api_reset_passed(snap.reset_at, self.balance, reader._now())
+                if passed is not None:
+                    # Bijv. na een herstart: de limietgegevens bevestigen dat de
+                    # tijd op de banner al verstreken is.
+                    snap.reset_at = passed
+                    snap.reset_clock = passed.strftime("%H:%M")
+                if snap.reset_at != self.last_reset:
+                    self._reset_attempted = False      # 新窗口，允许再强试一次
+                self.last_reset = snap.reset_at
+                self.last_reset_clock = snap.reset_clock
+                self._reset_src = snap.reset_src
         elif state == C.ST_QUOTA and self.last_reset is not None:
             snap.reset_at = self.last_reset
             snap.reset_clock = self.last_reset_clock

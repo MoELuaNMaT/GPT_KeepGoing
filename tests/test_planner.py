@@ -330,3 +330,32 @@ def run():
 
 if __name__ == "__main__":
     sys.exit(run())
+
+
+def _bal(resets_at):
+    return {"ok": True, "five_hour": {"resets_at": resets_at, "remaining_percent": 0.0}}
+
+
+def test_api_confirms_banner_time_already_passed():
+    # 23:26:11 leest de banner "Vanaf 23:26" en schuift door naar 04:26;
+    # de limietgegevens zeggen dat 23:26:10 al voorbij is: dan geldt 23:26.
+    now = datetime(2026, 11, 13, 23, 26, 11).astimezone()
+    rolled = datetime(2026, 11, 14, 4, 26).astimezone()
+    api = datetime(2026, 11, 13, 23, 26, 10).astimezone().isoformat(timespec="seconds")
+    got = planner.api_reset_passed(rolled, _bal(api), now)
+    assert got is not None and (got.day, got.hour, got.minute) == (13, 23, 26), got
+
+
+def test_api_reset_in_future_changes_nothing():
+    now = datetime(2026, 11, 13, 22, 0).astimezone()
+    banner = datetime(2026, 11, 13, 23, 26).astimezone()
+    api = banner.isoformat(timespec="seconds")
+    assert planner.api_reset_passed(banner, _bal(api), now) is None
+
+
+def test_api_reset_unrelated_gap_changes_nothing():
+    now = datetime(2026, 11, 13, 23, 30).astimezone()
+    banner = datetime(2026, 11, 14, 2, 0).astimezone()
+    api = datetime(2026, 11, 13, 23, 26).astimezone().isoformat(timespec="seconds")
+    assert planner.api_reset_passed(banner, _bal(api), now) is None
+    assert planner.api_reset_passed(banner, {"ok": False}, now) is None

@@ -81,6 +81,7 @@ class Snap:
     quota_msgs: list = field(default_factory=list)
     reset_clock: str = ""
     reset_at: object = None
+    reset_src: str = ""
     goal_status: str = ""
     goal_objective: str = ""
     goal_actions: list = field(default_factory=list)
@@ -257,6 +258,7 @@ def read(win=None):
         if reset_at:
             snap.reset_clock = clock
             snap.reset_at = reset_at
+            snap.reset_src = msg
             break
 
     snap.ok = True
