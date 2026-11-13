@@ -41,7 +41,7 @@ RESET_NL_RE = re.compile(
 
 # 只有出现这些词才认为是在说重置时间，避免把正文里的时刻当重置时间
 RESET_HINT_WORDS = ("重置", "后重试", "retry", "resets", "reset at",
-                    "opnieuw vanaf", "gereset")
+                    "opnieuw vanaf", "gereset", "vanaf ", "weer verder")
 
 # 只有时刻没有日期时，客户端指的是"本窗口的下一次重置"。
 # 若该时刻已经过去，说明横幅是上一次窗口留下的旧值：按窗口长度向前滚，

@@ -269,6 +269,16 @@ def test_dutch_reset_time_today():
     assert (got.day, got.hour, got.minute) == (13, 23, 26), got
 
 
+def test_dutch_inline_limit_message_with_vanaf():
+    # Exacte tekst die de Nederlandse client toont als het 5-uurslimiet op is
+    from app.reader import parse_reset_time
+    now = datetime(2026, 11, 13, 20, 47).astimezone()
+    text = "Je hebt je gebruikslimiet bereikt. Vanaf 23:26 kun je weer verder."
+    assert planner.is_quota_text(text)
+    got, _ = parse_reset_time(text, now)
+    assert got is not None and (got.day, got.hour, got.minute) == (13, 23, 26), got
+
+
 def test_time_after_midnight_is_tomorrow():
     from app.reader import parse_reset_time
     now = datetime(2026, 11, 13, 21, 30).astimezone()
