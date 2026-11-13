@@ -99,6 +99,33 @@ def should_attempt(snap, now, expect_reset_at=None, grace_seconds=0):
     return now >= expect_reset_at + _seconds(grace_seconds)
 
 
+def weekly_exhausted(balance, snap, now, min_wait_hours=None):
+    """Is de wekelijkse limiet op?
+
+    Twee onafhankelijke aanwijzingen, één is genoeg:
+    1) de lokale sessiegegevens melden voor het weekvenster (vrijwel) 0% over;
+    2) de client noemt een resetmoment dat verder weg ligt dan een 5-uursvenster
+       kan zijn.
+    """
+    from datetime import timedelta
+    hours = C.WEEKLY_MIN_WAIT_HOURS if min_wait_hours is None else min_wait_hours
+    week = (balance or {}).get("weekly") if (balance or {}).get("ok") else None
+    if week and week.get("remaining_percent") is not None and week["remaining_percent"] <= 1.0:
+        return True
+    if snap.quota_msgs and snap.reset_at is not None:
+        return snap.reset_at - now >= timedelta(hours=hours)
+    return False
+
+
+def should_use_banked_reset(cfg, snap, balance, now):
+    """Optie aan, de client biedt een opgespaarde reset aan, en het is de weeklimiet."""
+    if not getattr(cfg, "use_banked_reset", False):
+        return False
+    if not snap.banked_reset_offer:
+        return False
+    return weekly_exhausted(balance, snap, now)
+
+
 def is_stale(snap, now, cfg):
     """界面可能没刷新：已过重置时刻但界面仍显示额度用尽。"""
     if not snap.quota_msgs:

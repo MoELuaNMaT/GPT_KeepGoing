@@ -32,17 +32,24 @@ NAMED_KINDS = {
 RESET_CJK_RE = re.compile(r"(?:(\d{4})年)?\s*(\d{1,2})月(\d{1,2})日\s*(\d{1,2}):(\d{2})")
 RESET_ISO_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})")
 RESET_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})")
+# Nederlands: "14 nov 2026 02:41", "14 nov. 02:41", "14 november, 02:41"
+NL_MONTHS = {"jan": 1, "feb": 2, "mrt": 3, "maa": 3, "apr": 4, "mei": 5, "jun": 6,
+             "jul": 7, "aug": 8, "sep": 9, "okt": 10, "nov": 11, "dec": 12}
+RESET_NL_RE = re.compile(
+    r"(\d{1,2})\s+(jan|feb|mrt|maa|apr|mei|jun|jul|aug|sep|okt|nov|dec)[a-z]*\.?"
+    r"(?:\s+(\d{4}))?,?\s+(?:om\s+)?(\d{1,2}):(\d{2})", re.IGNORECASE)
 
 # 只有出现这些词才认为是在说重置时间，避免把正文里的时刻当重置时间
-RESET_HINT_WORDS = ("重置", "后重试", "retry", "resets", "reset at")
+RESET_HINT_WORDS = ("重置", "后重试", "retry", "resets", "reset at",
+                    "opnieuw vanaf", "gereset")
 
 # 只有时刻没有日期时，客户端指的是"本窗口的下一次重置"。
 # 若该时刻已经过去，说明横幅是上一次窗口留下的旧值：按窗口长度向前滚，
 # 直到落在未来。按"次日"算是错的——那会让应用干等 20 小时（实测事故）。
 DEFAULT_WINDOW_MINUTES = 300
-PROJECT_RE = re.compile(r"^项目：(.+)$")
-CONTEXT_RE = re.compile(r"^上下文用量：(\d+)%$")
-GOAL_ELAPSED_RE = re.compile(r"(\d+d \d+h \d+m \d+s)$")
+PROJECT_RE = re.compile(r"^(?:项目：|Project: )(.+)$")
+CONTEXT_RE = re.compile(r"^(?:上下文用量：|Contextgebruik: )(\d+)\s?%$")
+GOAL_ELAPSED_RE = re.compile(r"((?:\d+d )?(?:\d+h )?(?:\d+m )?\d+s)$")
 
 
 @dataclass
@@ -81,6 +88,7 @@ class Snap:
     composer_empty: bool = True
     send_present: bool = False
     send_enabled: bool = False
+    banked_reset_offer: bool = False
     read_ms: int = 0
 
 
@@ -173,7 +181,7 @@ def read(win=None):
 
     composer_value = ""
     for idx, it in enumerate(items):
-        name = it.name
+        name = C.canon(it.name)
         if it.kind == "EditControl" and C.COMPOSER_CLASS_MARK in it.cls:
             composer_value = it.value
         if not name:
@@ -192,7 +200,7 @@ def read(win=None):
         if m:
             snap.context_pct = int(m.group(1))
 
-        if it.kind == "ButtonControl" and name == "更改权限":
+        if it.kind == "ButtonControl" and name in C.PERMISSION_BUTTON_NAMES:
             # 权限值紧跟在这个按钮后面
             for nxt in items[idx + 1: idx + 7]:
                 if nxt.kind == "TextControl" and nxt.name:
@@ -222,8 +230,10 @@ def read(win=None):
             if name not in snap.goal_actions:
                 snap.goal_actions.append(name)
 
-        if it.kind == "ButtonControl" and name.startswith("目标") and not snap.goal_objective:
-            rest = re.sub("^(" + "|".join(C.GOAL_LABELS) + r")\s*", "", name)
+        if (it.kind == "ButtonControl" and not snap.goal_objective
+                and (name.startswith("目标") or it.name.startswith("Doel "))):
+            labels = C.GOAL_LABELS + tuple(C.NL_ALIASES)
+            rest = re.sub("^(" + "|".join(map(re.escape, labels)) + r")\s*", "", it.name)
             rest = GOAL_ELAPSED_RE.sub("", rest).strip()
             if rest and rest not in C.GOAL_LABELS:
                 snap.goal_objective = rest[:200]
@@ -233,6 +243,9 @@ def read(win=None):
             # 输入框的名字就是占位符
             text = composer_value.rstrip("\n").strip()
             snap.composer_empty = (text == "" or text == name.strip())
+
+        if it.kind == "ButtonControl" and name in C.BANKED_RESET_LABELS and it.enabled:
+            snap.banked_reset_offer = True
 
         if it.kind == "ButtonControl" and name in C.SEND_LABELS:
             snap.send_present = True
@@ -292,10 +305,28 @@ def parse_reset_time(text, now):
             return None, ""
         return target, m.group(0).strip()
 
+    m = RESET_NL_RE.search(text)
+    if m:
+        day, month = int(m.group(1)), NL_MONTHS[m.group(2).lower()]
+        year = int(m.group(3)) if m.group(3) else now.year
+        hour, minute = int(m.group(4)), int(m.group(5))
+        try:
+            target = now.replace(year=year, month=month, day=day, hour=hour,
+                                 minute=minute, second=0, microsecond=0)
+        except ValueError:
+            return None, ""
+        if not m.group(3) and target < now - timedelta(hours=1):
+            target = target.replace(year=year + 1)
+        return target, m.group(0).strip()
+
     m = RESET_TIME_RE.search(text)
     if m:
         hour, minute = int(m.group(1)), int(m.group(2))
         target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now - timedelta(minutes=DEFAULT_WINDOW_MINUTES):
+            # Ruim meer dan één venster geleden: dat is een tijd van morgen
+            # (bijv. 00:30 gezien om 21:30), geen achtergebleven oude banner.
+            target = target + timedelta(days=1)
         # 已过则按窗口长度向前滚，而不是推到次日
         while target <= now:
             target = target + timedelta(minutes=DEFAULT_WINDOW_MINUTES)

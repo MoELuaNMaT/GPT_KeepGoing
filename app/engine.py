@@ -181,6 +181,27 @@ class Engine(threading.Thread):
             self.prev_state = state
             return
 
+        # Optie: weeklimiet op en de client biedt een opgespaarde reset aan
+        if planner.should_use_banked_reset(self.cfg, snap, self.balance, reader._now()):
+            if time.time() - getattr(self, "_banked_tried_at", 0) >= 30 * 60:
+                self._banked_tried_at = time.time()
+                ok, detail = actor.use_banked_reset(self.log)
+                self.log.write("info" if ok else "warn", "banked_reset", ok=ok, detail=detail)
+                lang = self.cfg.language
+                self._notify(i18n.t(lang, "app_title"),
+                             i18n.t(lang, "notify_banked_ok" if ok else "notify_banked_fail"),
+                             "info" if ok else "warn")
+                if ok:
+                    self.last_reset = None
+                    self.last_reset_clock = ""
+                    self.attempts = 0
+                    self.halted = False
+                    time.sleep(5)
+                    # Het oude limietbericht blijft in het gesprek staan: forceer hervatten
+                    self._execute(manual=True)
+                    self.prev_state = state
+                    return
+
         # 兜底：到了重置时刻，即使目标被判为受阻，也强试一次恢复
         if (self.goal_mode == C.GM_BLOCKED and self.last_reset is not None
                 and not self._reset_attempted and reader._now() >= self.last_reset):

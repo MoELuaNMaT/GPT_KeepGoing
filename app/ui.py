@@ -239,6 +239,11 @@ class Dashboard:
                                        variable=self.var_auto, command=self._on_autostart)
         self.chk_auto.pack(anchor="w")
         self._i18n.append((self.chk_auto, "chk_autostart"))
+        self.var_banked = tk.BooleanVar(value=bool(self.cfg.use_banked_reset))
+        self.chk_banked = tk.Checkbutton(opt, text="", font=FONT_SMALL,
+                                         variable=self.var_banked, command=self._on_banked)
+        self.chk_banked.pack(anchor="w")
+        self._i18n.append((self.chk_banked, "chk_banked"))
 
         self.lbl_hint = tk.Label(self.root, text="", font=FONT_SMALL, fg="#b45309",
                                  wraplength=530, justify="left")
@@ -358,6 +363,12 @@ class Dashboard:
         word = i18n.t(self.lang, "word_on" if self.cfg.follow_open_thread else "word_off")
         self._append("follow", i18n.t(self.lang, "log_follow", state=word))
         self.engine.due_at = 0
+
+    def _on_banked(self):
+        self.cfg.use_banked_reset = bool(self.var_banked.get())
+        self.cfg.save()
+        word = i18n.t(self.lang, "word_on" if self.cfg.use_banked_reset else "word_off")
+        self._append("banked", i18n.t(self.lang, "log_banked", state=word))
 
     def _on_autostart(self):
         want = bool(self.var_auto.get())

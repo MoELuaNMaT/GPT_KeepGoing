@@ -42,6 +42,8 @@ class Config:
     follow_open_thread: bool = False
     autostart: bool = False
     notify_enabled: bool = True
+    # 周额度用尽时自动使用已有的（免费）重置次数。默认关闭。
+    use_banked_reset: bool = False
 
     @classmethod
     def load(cls):

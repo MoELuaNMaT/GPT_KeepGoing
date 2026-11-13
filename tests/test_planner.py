@@ -216,6 +216,92 @@ def test_choose_act_resumes_limited_goal():
     assert planner.choose_act(s) == "resume_goal"
 
 
+def _cfg_banked(on=True):
+    c = Config()
+    c.use_banked_reset = on
+    return c
+
+
+def test_weekly_exhausted_from_balance():
+    now = datetime(2026, 11, 13, 20, 0).astimezone()
+    bal = {"ok": True, "weekly": {"remaining_percent": 0.0}}
+    assert planner.weekly_exhausted(bal, snap(), now)
+
+
+def test_weekly_not_exhausted_for_five_hour_limit():
+    now = datetime(2026, 11, 13, 20, 0).astimezone()
+    bal = {"ok": True, "weekly": {"remaining_percent": 45.0}}
+    s = snap(quota_msgs=["Je hebt je gebruikslimiet bereikt."], reset_at=now + timedelta(hours=3))
+    assert not planner.weekly_exhausted(bal, s, now)
+
+
+def test_weekly_exhausted_from_far_reset_time():
+    now = datetime(2026, 11, 13, 20, 0).astimezone()
+    s = snap(quota_msgs=["Je hebt je gebruikslimiet bereikt."], reset_at=now + timedelta(days=4))
+    assert planner.weekly_exhausted({"ok": False}, s, now)
+
+
+def test_banked_reset_only_when_option_on_and_offered():
+    now = datetime(2026, 11, 13, 20, 0).astimezone()
+    bal = {"ok": True, "weekly": {"remaining_percent": 0.0}}
+    offered = snap(banked_reset_offer=True)
+    assert planner.should_use_banked_reset(_cfg_banked(True), offered, bal, now)
+    assert not planner.should_use_banked_reset(_cfg_banked(False), offered, bal, now)
+    assert not planner.should_use_banked_reset(_cfg_banked(True), snap(), bal, now)
+
+
+def test_banked_reset_not_for_five_hour_limit():
+    now = datetime(2026, 11, 13, 20, 0).astimezone()
+    bal = {"ok": True, "weekly": {"remaining_percent": 45.0}}
+    s = snap(banked_reset_offer=True, quota_msgs=["x" * 20], reset_at=now + timedelta(hours=2))
+    assert not planner.should_use_banked_reset(_cfg_banked(True), s, bal, now)
+
+
+def test_dutch_quota_banner_is_detected():
+    assert planner.is_quota_text("Je hebt je gebruikslimiet bereikt. Probeer het opnieuw vanaf 23:26.")
+    assert not planner.is_quota_text("De bouw loopt nu door de kernelcode")
+
+
+def test_dutch_reset_time_today():
+    from app.reader import parse_reset_time
+    now = datetime(2026, 11, 13, 20, 0).astimezone()
+    got, _ = parse_reset_time("Je hebt je gebruikslimiet bereikt. Probeer het opnieuw vanaf 23:26.", now)
+    assert (got.day, got.hour, got.minute) == (13, 23, 26), got
+
+
+def test_time_after_midnight_is_tomorrow():
+    from app.reader import parse_reset_time
+    now = datetime(2026, 11, 13, 21, 30).astimezone()
+    got, _ = parse_reset_time("Je hebt je gebruikslimiet bereikt. Probeer het opnieuw vanaf 00:30.", now)
+    assert (got.day, got.hour, got.minute) == (14, 0, 30), got
+
+
+def test_recently_passed_time_still_rolls_by_window():
+    from app.reader import parse_reset_time
+    now = datetime(2026, 11, 13, 20, 0).astimezone()
+    got, _ = parse_reset_time("usage limit, retry at 19:37", now)
+    assert (got.day, got.hour, got.minute) == (14, 0, 37), got
+
+
+def test_dutch_reset_date():
+    from app.reader import parse_reset_time
+    now = datetime(2026, 11, 13, 20, 0).astimezone()
+    got, _ = parse_reset_time("Je hebt je gebruikslimiet bereikt. Probeer het opnieuw vanaf 19 nov 2026 02:41.", now)
+    assert (got.month, got.day, got.hour, got.minute) == (11, 19, 2, 41), got
+
+
+def test_dutch_goal_labels_map_to_canonical():
+    assert C.canon("Doel nastreven") == C.GOAL_ACTIVE
+    assert C.canon("Gepauzeerd doel") == C.GOAL_PAUSED
+    assert C.canon("Doel hervatten") == C.GOAL_RESUME
+    assert C.canon("iets anders") == "iets anders"
+
+
+def test_purchase_buttons_are_never_reset_labels():
+    for label in C.BANKED_RESET_LABELS + C.USE_RESET_LABELS + C.CONFIRM_RESET_LABELS:
+        assert not any(m in label for m in C.PURCHASE_MARKERS), label
+
+
 def run():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]
