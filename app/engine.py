@@ -197,10 +197,18 @@ class Engine(threading.Thread):
             return
 
         # Optie: weeklimiet op en de client biedt een opgespaarde reset aan
-        if planner.should_use_banked_reset(self.cfg, snap, self.balance, reader._now()):
-            if time.time() - getattr(self, "_banked_tried_at", 0) >= 30 * 60:
+        if (state == C.ST_QUOTA
+                and planner.should_use_banked_reset(self.cfg, snap, self.balance, reader._now())):
+            if time.time() - getattr(self, "_banked_tried_at", 0) >= getattr(self, "_banked_backoff", 30 * 60):
                 self._banked_tried_at = time.time()
-                ok, detail = actor.use_banked_reset(self.log)
+                ok, detail = actor.use_banked_reset(self.log, self.cfg.locked_thread or snap.thread)
+                # Niets beschikbaar: niet elk half uur de instellingen openen
+                self._banked_backoff = (6 * 3600 if detail in ("no resets available",
+                                                                "only 5-hour resets available")
+                                        else 30 * 60)
+                if ok:
+                    # De limietgegevens lopen achter; niet meteen nog een reset verbruiken
+                    self._banked_backoff = 6 * 3600
                 self.log.write("info" if ok else "warn", "banked_reset", ok=ok, detail=detail)
                 lang = self.cfg.language
                 self._notify(i18n.t(lang, "app_title"),

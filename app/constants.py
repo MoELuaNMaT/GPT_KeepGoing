@@ -97,7 +97,18 @@ CONFIRM_RESET_LABELS = ("Bevestigen", "Confirm", "确认")
 PURCHASE_MARKERS = ("Betaal", "betaal", "Pay ", "pay ", "Buy", "kopen", "Kopen",
                     "Upgrade", "upgrade", "Credits", "credits", "支付", "购买", "升级")
 RESET_DONE_TEXTS = ("De gebruikslimieten zijn gereset", "Gebruikslimieten zijn gereset",
+                    "Gebruikslimieten gereset",
                     "Usage limits reset", "额度限制已重置", "使用限额已重置")
+# Instellingen > Gebruik en facturering > Resetmomenten voor gebruikslimiet
+# (settings.usage.resets.*). Alleen de Nederlandse labels zijn live gezien.
+SETTINGS_DOC_NAMES = ("Instellingen", "Settings", "设置")
+USAGE_SETTINGS_LABELS = ("Gebruik en facturering", "Usage and billing", "Usage & billing")
+SETTINGS_USE_RESET_LABELS = ("Resetmoment gebruiken", "Use reset")
+NO_RESETS_TEXTS = ("Geen resetmomenten beschikbaar", "No resets available")
+# Resetsoorten die ook de weeklimiet herstellen
+WEEKLY_RESET_MARKERS = ("wekelijks", "Wekelijks", "weekly", "Weekly", "Volledig", "Full")
+BACK_LABELS = ("Terug", "Back", "返回")
+
 # 等待超过这个时长，只可能是周额度
 WEEKLY_MIN_WAIT_HOURS = 6
 

@@ -310,12 +310,137 @@ def _find_button_prefix(win, labels):
     return None, ""
 
 
-def use_banked_reset(log):
-    """Gebruik één opgespaarde reset via het weeklimiet-venster van de client.
+def _find_text(win, texts, limit=4000):
+    """Staat een van deze teksten (exact) ergens in het venster?"""
+    stack = [win]
+    seen = 0
+    while stack and seen < limit:
+        c = stack.pop()
+        seen += 1
+        try:
+            if (c.Name or "").strip() in texts:
+                return True
+            stack.extend(c.GetChildren())
+        except Exception:
+            continue
+    return False
 
-    Klikt alleen 'Beschikbare reset gebruiken' en, als de client daarna de
-    resetlijst toont, 'Resetten gebruiken' gevolgd door 'Bevestigen'.
-    Betaalknoppen worden nooit aangeraakt. Geeft (ok, detail) terug.
+
+def _settings_reset_buttons(win):
+    """Knoppen 'Resetmoment gebruiken <soort>' op de gebruikspagina (nooit betaalknoppen)."""
+    found = []
+    for c in _buttons(win):
+        try:
+            name = (c.Name or "").strip()
+        except Exception:
+            continue
+        if _is_purchase(name):
+            continue
+        if any(name == l or name.startswith(l + " ") for l in C.SETTINGS_USE_RESET_LABELS):
+            found.append((c, name))
+    return found
+
+
+def _leave_settings(log, target_thread):
+    """Terug uit Instellingen naar het bewaakte gesprek."""
+    for _ in range(3):
+        snap = reader.read()
+        if snap.thread not in C.SETTINGS_DOC_NAMES:
+            break
+        win = discovery.find_window()
+        if win is None:
+            break
+        clicked = False
+        for label in C.BACK_LABELS:
+            if find_button(win, label) is not None and click_button(win, label):
+                clicked = True
+                break
+        if not clicked:
+            auto.SendKeys("{Esc}", waitTime=0.05)
+        time.sleep(1.5)
+    snap = reader.read()
+    if target_thread and snap.thread != target_thread:
+        ok, err = switch_to_thread(target_thread)
+        if not ok:
+            log.write("warn", "banked_reset_return_fail", detail=err)
+
+
+def _use_reset_from_settings(log, target_thread):
+    """Instellingen (Ctrl+,) > Gebruik en facturering > 'Resetmoment gebruiken' > 'Bevestigen'.
+
+    Kiest alleen een reset die ook de weeklimiet herstelt. Geeft (ok, detail) terug;
+    detail 'no resets available' als er niets te gebruiken is.
+    """
+    auto.SendKeys("{Ctrl},", waitTime=0.05)
+    win = None
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        time.sleep(0.5)
+        win = discovery.find_window()
+        if win is None:
+            continue
+        if any(find_button(win, l) is not None for l in C.USAGE_SETTINGS_LABELS):
+            break
+    else:
+        _leave_settings(log, target_thread)
+        return False, "usage settings not found"
+    for label in C.USAGE_SETTINGS_LABELS:
+        if find_button(win, label) is not None and click_button(win, label):
+            break
+    log.write("info", "banked_reset_settings_opened")
+
+    buttons = []
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        time.sleep(0.8)
+        win = discovery.find_window()
+        if win is None:
+            continue
+        buttons = _settings_reset_buttons(win)
+        if buttons or _find_text(win, C.NO_RESETS_TEXTS):
+            break
+    weekly = [(c, n) for c, n in buttons if any(m in n for m in C.WEEKLY_RESET_MARKERS)]
+    if not weekly:
+        _leave_settings(log, target_thread)
+        if buttons:
+            return False, "only 5-hour resets available"
+        return False, "no resets available"
+
+    btn, name = weekly[0]
+    _invoke(btn)
+    log.write("info", "banked_reset_use", detail=name[:80])
+    time.sleep(1.5)
+    win = discovery.find_window()
+    conf, conf_name = _find_button_prefix(win, C.CONFIRM_RESET_LABELS) if win else (None, "")
+    if conf is None:
+        _leave_settings(log, target_thread)
+        return False, "reset confirm button not found"
+    _invoke(conf)
+    log.write("info", "banked_reset_confirm", detail=conf_name[:60])
+
+    ok = False
+    for _ in range(8):
+        time.sleep(1.2)
+        win = discovery.find_window()
+        if win is None:
+            continue
+        if _find_text(win, C.RESET_DONE_TEXTS):
+            ok = True
+            break
+        if len(_settings_reset_buttons(win)) < len(buttons):
+            ok = True
+            break
+    _leave_settings(log, target_thread)
+    return (True, "reset used (settings)") if ok else (False, "reset not confirmed")
+
+
+def use_banked_reset(log, target_thread=""):
+    """Gebruik één opgespaarde reset.
+
+    Eerst via het weeklimiet-venster ('Beschikbare reset gebruiken'); is dat er
+    niet, dan via Instellingen > Gebruik en facturering ('Resetmoment gebruiken'
+    gevolgd door 'Bevestigen'). Betaalknoppen worden nooit aangeraakt.
+    Geeft (ok, detail) terug.
     """
     hwnd = discovery.find_hwnd()
     if not hwnd:
@@ -330,7 +455,8 @@ def use_banked_reset(log):
         if btn is not None:
             break
     if btn is None:
-        return False, "no banked reset button"
+        # Geen limietvenster met resetknop: via Instellingen > Gebruik en facturering
+        return _use_reset_from_settings(log, target_thread)
     how = _invoke(btn)
     if not how:
         return False, "banked reset button not clickable"

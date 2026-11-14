@@ -359,3 +359,24 @@ def test_api_reset_unrelated_gap_changes_nothing():
     api = datetime(2026, 11, 13, 23, 26).astimezone().isoformat(timespec="seconds")
     assert planner.api_reset_passed(banner, _bal(api), now) is None
     assert planner.api_reset_passed(banner, {"ok": False}, now) is None
+
+
+def test_banked_reset_without_dialog_when_weekly_limit_banner_shown():
+    # Nieuwe client: in het gesprek staat alleen de limietmelding en
+    # 'Meer gebruiksruimte krijgen'; de reset staat in Instellingen.
+    now = datetime(2026, 11, 14, 11, 45).astimezone()
+    bal = {"ok": True, "weekly": {"remaining_percent": 0.0}}
+    s = snap(quota_msgs=["Je hebt je gebruikslimiet bereikt. Vanaf 19 nov, 20:02 kun je weer verder."],
+             reset_at=datetime(2026, 11, 19, 20, 2).astimezone())
+    assert planner.should_use_banked_reset(_cfg_banked(True), s, bal, now)
+    assert not planner.should_use_banked_reset(_cfg_banked(False), s, bal, now)
+
+
+def test_settings_reset_labels_skip_purchases_and_pick_weekly():
+    names = ["Resetmoment gebruiken Volledig resetten (wekelijks + 5 uur)",
+             "Meer toevoegen", "Credits aan werkruimte toevoegen"]
+    weekly = [n for n in names
+              if n.startswith(C.SETTINGS_USE_RESET_LABELS[0] + " ")
+              and any(m in n for m in C.WEEKLY_RESET_MARKERS)]
+    assert weekly == [names[0]]
+    assert any(m in "Credits aan werkruimte toevoegen" for m in C.PURCHASE_MARKERS)

@@ -142,10 +142,14 @@ def weekly_exhausted(balance, snap, now, min_wait_hours=None):
 
 
 def should_use_banked_reset(cfg, snap, balance, now):
-    """Optie aan, de client biedt een opgespaarde reset aan, en het is de weeklimiet."""
+    """Optie aan, het gesprek staat op de limiet, en het is de weeklimiet.
+
+    De reset zelf wordt gezocht in het limietvenster of, als dat er niet is,
+    in Instellingen > Gebruik en facturering.
+    """
     if not getattr(cfg, "use_banked_reset", False):
         return False
-    if not snap.banked_reset_offer:
+    if not snap.banked_reset_offer and not snap.quota_msgs:
         return False
     return weekly_exhausted(balance, snap, now)
 
