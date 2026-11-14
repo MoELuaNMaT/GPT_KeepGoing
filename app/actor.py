@@ -66,9 +66,14 @@ def list_conversations():
 
     result = []
     for i, node in enumerate(nodes):
-        if node["kind"] != "ListControl" or not node["name"].endswith("中的已安排任务"):
+        if node["kind"] != "ListControl":
             continue
-        project = node["name"][: -len("中的已安排任务")]
+        if node["name"].endswith(C.TASKS_LIST_SUFFIX):
+            project = node["name"][: -len(C.TASKS_LIST_SUFFIX)]
+        elif node["name"].startswith(C.TASKS_LIST_PREFIX_NL):
+            project = node["name"][len(C.TASKS_LIST_PREFIX_NL):]
+        else:
+            continue
         convs = []
         depth = node["depth"]
         for j in range(i + 1, len(nodes)):
@@ -79,6 +84,34 @@ def list_conversations():
                 convs.append(nxt["name"])
         if project and convs:
             result.append({"project": project, "conversations": convs})
+
+    # Losse chats (sectie "Chats" in de zijbalk): een naamloze ListControl zonder
+    # geneste lijsten, met de gesprekken als directe ListItem-kinderen.
+    # De projectenlijst zelf valt af, want die bevat geneste lijsten.
+    seen = {c for grp in result for c in grp["conversations"]}
+    loose = []
+    for i, node in enumerate(nodes):
+        if node["kind"] != "ListControl" or node["name"]:
+            continue
+        depth = node["depth"]
+        items, nested = [], False
+        for j in range(i + 1, len(nodes)):
+            nxt = nodes[j]
+            if nxt["depth"] <= depth:
+                break
+            if nxt["kind"] == "ListControl":
+                nested = True
+                break
+            if nxt["kind"] == "ListItemControl" and nxt["depth"] == depth + 1 and nxt["name"]:
+                items.append(nxt["name"])
+        if nested:
+            continue
+        for title in items:
+            if title not in seen:
+                seen.add(title)
+                loose.append(title)
+    if loose:
+        result.append({"project": "Chats", "conversations": loose})
     return result
 
 
@@ -119,7 +152,7 @@ def _invoke(ctrl):
 
 def invoke_resume_goal(win):
     """点「恢复目标」。名字可能有变体，按精确 → 变体 → 模糊三级尝试。"""
-    for name in (C.GOAL_RESUME, C.GOAL_RESUME_CONFIRM, "继续目标", "恢复"):
+    for name in C.GOAL_RESUME_NAMES + ("恢复",):
         ctrl = find_button(win, name)
         if ctrl is not None:
             how = _invoke(ctrl)
@@ -130,7 +163,8 @@ def invoke_resume_goal(win):
             name = ctrl.Name or ""
         except Exception:
             continue
-        if len(name) <= 16 and "恢复" in name and "目标" in name:
+        if len(name) <= 24 and (("恢复" in name and "目标" in name)
+                               or ("hervatten" in name and "Doel" in name)):
             how = _invoke(ctrl)
             if how:
                 return how
@@ -237,7 +271,11 @@ def send_message():
     win = discovery.find_window()
     if win is None:
         return False, "客户端未运行"
-    ctrl = find_button(win, "发送") or find_button(win, "发送消息")
+    ctrl = None
+    for label in C.SEND_LABELS:
+        ctrl = find_button(win, label)
+        if ctrl is not None:
+            break
     if ctrl is not None:
         try:
             enabled = ctrl.IsEnabled
@@ -252,6 +290,235 @@ def send_message():
     # 退回回车
     auto.SendKeys("{Enter}", waitTime=0.2)
     return True, "回车发送"
+
+
+def _is_purchase(name):
+    return any(m in (name or "") for m in C.PURCHASE_MARKERS)
+
+
+def _find_button_prefix(win, labels):
+    """Knop waarvan de naam met een van de labels begint (nooit een betaalknop)."""
+    for c in _buttons(win):
+        try:
+            name = (c.Name or "").strip()
+        except Exception:
+            continue
+        if _is_purchase(name):
+            continue
+        if any(name == l or name.startswith(l + " ") for l in labels):
+            return c, name
+    return None, ""
+
+
+def _find_text(win, texts, limit=4000):
+    """Staat een van deze teksten (exact) ergens in het venster?"""
+    stack = [win]
+    seen = 0
+    while stack and seen < limit:
+        c = stack.pop()
+        seen += 1
+        try:
+            if (c.Name or "").strip() in texts:
+                return True
+            stack.extend(c.GetChildren())
+        except Exception:
+            continue
+    return False
+
+
+def _settings_reset_buttons(win):
+    """Knoppen 'Resetmoment gebruiken <soort>' op de gebruikspagina (nooit betaalknoppen)."""
+    found = []
+    for c in _buttons(win):
+        try:
+            name = (c.Name or "").strip()
+        except Exception:
+            continue
+        if _is_purchase(name):
+            continue
+        if any(name == l or name.startswith(l + " ") for l in C.SETTINGS_USE_RESET_LABELS):
+            found.append((c, name))
+    return found
+
+
+def _leave_settings(log, target_thread):
+    """Terug uit Instellingen naar het bewaakte gesprek."""
+    for _ in range(3):
+        snap = reader.read()
+        if snap.thread not in C.SETTINGS_DOC_NAMES:
+            break
+        win = discovery.find_window()
+        if win is None:
+            break
+        clicked = False
+        for label in C.BACK_LABELS:
+            if find_button(win, label) is not None and click_button(win, label):
+                clicked = True
+                break
+        if not clicked:
+            auto.SendKeys("{Esc}", waitTime=0.05)
+        time.sleep(1.5)
+    snap = reader.read()
+    if target_thread and snap.thread != target_thread:
+        ok, err = switch_to_thread(target_thread)
+        if not ok:
+            log.write("warn", "banked_reset_return_fail", detail=err)
+
+
+def _use_reset_from_settings(log, target_thread):
+    """Instellingen (Ctrl+,) > Gebruik en facturering > 'Resetmoment gebruiken' > 'Bevestigen'.
+
+    Kiest alleen een reset die ook de weeklimiet herstelt. Geeft (ok, detail) terug;
+    detail 'no resets available' als er niets te gebruiken is.
+    """
+    auto.SendKeys("{Ctrl},", waitTime=0.05)
+    win = None
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        time.sleep(0.5)
+        win = discovery.find_window()
+        if win is None:
+            continue
+        if any(find_button(win, l) is not None for l in C.USAGE_SETTINGS_LABELS):
+            break
+    else:
+        _leave_settings(log, target_thread)
+        return False, "usage settings not found"
+    for label in C.USAGE_SETTINGS_LABELS:
+        if find_button(win, label) is not None and click_button(win, label):
+            break
+    log.write("info", "banked_reset_settings_opened")
+
+    buttons = []
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        time.sleep(0.8)
+        win = discovery.find_window()
+        if win is None:
+            continue
+        buttons = _settings_reset_buttons(win)
+        if buttons or _find_text(win, C.NO_RESETS_TEXTS):
+            break
+    weekly = [(c, n) for c, n in buttons if any(m in n for m in C.WEEKLY_RESET_MARKERS)]
+    if not weekly:
+        _leave_settings(log, target_thread)
+        if buttons:
+            return False, "only 5-hour resets available"
+        return False, "no resets available"
+
+    btn, name = weekly[0]
+    _invoke(btn)
+    log.write("info", "banked_reset_use", detail=name[:80])
+    time.sleep(1.5)
+    win = discovery.find_window()
+    conf, conf_name = _find_button_prefix(win, C.CONFIRM_RESET_LABELS) if win else (None, "")
+    if conf is None:
+        _leave_settings(log, target_thread)
+        return False, "reset confirm button not found"
+    _invoke(conf)
+    log.write("info", "banked_reset_confirm", detail=conf_name[:60])
+
+    ok = False
+    for _ in range(8):
+        time.sleep(1.2)
+        win = discovery.find_window()
+        if win is None:
+            continue
+        if _find_text(win, C.RESET_DONE_TEXTS):
+            ok = True
+            break
+        if len(_settings_reset_buttons(win)) < len(buttons):
+            ok = True
+            break
+    _leave_settings(log, target_thread)
+    return (True, "reset used (settings)") if ok else (False, "reset not confirmed")
+
+
+def use_banked_reset(log, target_thread=""):
+    """Gebruik één opgespaarde reset.
+
+    Eerst via het weeklimiet-venster ('Beschikbare reset gebruiken'); is dat er
+    niet, dan via Instellingen > Gebruik en facturering ('Resetmoment gebruiken'
+    gevolgd door 'Bevestigen'). Betaalknoppen worden nooit aangeraakt.
+    Geeft (ok, detail) terug.
+    """
+    hwnd = discovery.find_hwnd()
+    if not hwnd:
+        return False, "客户端未运行"
+    discovery.force_foreground(hwnd)
+    win = discovery.find_window()
+    if win is None:
+        return False, "客户端未运行"
+    btn = None
+    for label in C.BANKED_RESET_LABELS:
+        btn = find_button(win, label)
+        if btn is not None:
+            break
+    if btn is None:
+        # Geen limietvenster met resetknop: via Instellingen > Gebruik en facturering
+        return _use_reset_from_settings(log, target_thread)
+    how = _invoke(btn)
+    if not how:
+        return False, "banked reset button not clickable"
+    log.write("info", "banked_reset_clicked", detail=how)
+    time.sleep(2.5)
+
+    # Mogelijk opent nu de lijst met resets: eerst uitklappen, dan twee stappen.
+    win = discovery.find_window()
+    use_btn, use_name = _find_button_prefix(win, C.USE_RESET_LABELS) if win else (None, "")
+    if use_btn is None and win is not None:
+        toggle, _ = _find_button_prefix(win, C.RESET_LIST_TOGGLE_LABELS)
+        if toggle is None:
+            for c in _buttons(win):
+                try:
+                    n = c.Name or ""
+                except Exception:
+                    continue
+                if any(n.startswith(l) for l in C.RESET_LIST_TOGGLE_LABELS) and not _is_purchase(n):
+                    toggle = c
+                    break
+        if toggle is not None:
+            _invoke(toggle)
+            time.sleep(1.5)
+            win = discovery.find_window()
+            use_btn, use_name = _find_button_prefix(win, C.USE_RESET_LABELS) if win else (None, "")
+    if use_btn is not None:
+        _invoke(use_btn)
+        log.write("info", "banked_reset_use", detail=use_name[:60])
+        time.sleep(1.2)
+        win = discovery.find_window()
+        conf, conf_name = _find_button_prefix(win, C.CONFIRM_RESET_LABELS) if win else (None, "")
+        if conf is None:
+            return False, "reset confirm button not found"
+        _invoke(conf)
+        log.write("info", "banked_reset_confirm", detail=conf_name[:60])
+        time.sleep(3.0)
+
+    # Controle: het aanbod is weg, of de client meldt dat de limieten gereset zijn.
+    for _ in range(5):
+        snap = reader.read()
+        win = discovery.find_window()
+        done = False
+        if win is not None:
+            stack = [win]
+            seen = 0
+            while stack and seen < 4000 and not done:
+                c = stack.pop()
+                seen += 1
+                try:
+                    if (c.Name or "").strip() in C.RESET_DONE_TEXTS:
+                        done = True
+                        break
+                    stack.extend(c.GetChildren())
+                except Exception:
+                    continue
+        if done or (snap.ok and not snap.banked_reset_offer and use_btn is not None):
+            return True, "reset used"
+        if snap.ok and not snap.banked_reset_offer and use_btn is None:
+            # Directe inwisseling zonder lijst: aanbod verdwenen
+            return True, "reset used (direct)"
+        time.sleep(1.5)
+    return False, "reset not confirmed"
 
 
 def refresh_ladder(cfg, log, target_thread):
@@ -270,7 +537,9 @@ def refresh_ladder(cfg, log, target_thread):
 
     win = discovery.find_window()
     if win is not None:
-        click_button(win, "新聊天")
+        for label in C.NEW_CHAT_NAMES:
+            if click_button(win, label):
+                break
         time.sleep(1.5)
         ok, err = switch_to_thread(target_thread)
         if ok:
@@ -353,10 +622,12 @@ def run_act(cfg, log, expect_reset_at=None, force=False):
         time.sleep(1.5)
         # 可能弹确认框
         win2 = discovery.find_window()
-        if win2 is not None and find_button(win2, C.GOAL_RESUME_CONFIRM) is not None:
-            if click_button(win2, C.GOAL_RESUME_CONFIRM):
-                log.write("info", "goal_resume_confirmed")
-                time.sleep(0.8)
+        if win2 is not None:
+            for label in C.GOAL_RESUME_CONFIRM_NAMES:
+                if find_button(win2, label) is not None and click_button(win2, label):
+                    log.write("info", "goal_resume_confirmed")
+                    time.sleep(0.8)
+                    break
         return {"ok": True, "action": action, "detail": "点击恢复目标（" + how + "）"}
 
     # 无目标：输入继续并发送

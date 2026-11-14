@@ -129,10 +129,25 @@ class Engine(threading.Thread):
 
         # 横幅有时会丢掉重置时刻，缓存上一次读到的值，避免调度逻辑跟着抖
         if snap.reset_at is not None:
-            if snap.reset_at != self.last_reset:
-                self._reset_attempted = False      # 新窗口，允许再强试一次
-            self.last_reset = snap.reset_at
-            self.last_reset_clock = snap.reset_clock
+            if (self.last_reset is not None and snap.reset_at > self.last_reset
+                    and snap.reset_src == getattr(self, "_reset_src", None)):
+                # Zelfde banner als eerst; de parser heeft de tijd alleen een
+                # venster doorgeschoven omdat het moment net voorbij is.
+                # Het oorspronkelijke moment blijft gelden, anders wordt er nooit hervat.
+                snap.reset_at = self.last_reset
+                snap.reset_clock = self.last_reset_clock
+            else:
+                passed = planner.api_reset_passed(snap.reset_at, self.balance, reader._now())
+                if passed is not None:
+                    # Bijv. na een herstart: de limietgegevens bevestigen dat de
+                    # tijd op de banner al verstreken is.
+                    snap.reset_at = passed
+                    snap.reset_clock = passed.strftime("%H:%M")
+                if snap.reset_at != self.last_reset:
+                    self._reset_attempted = False      # 新窗口，允许再强试一次
+                self.last_reset = snap.reset_at
+                self.last_reset_clock = snap.reset_clock
+                self._reset_src = snap.reset_src
         elif state == C.ST_QUOTA and self.last_reset is not None:
             snap.reset_at = self.last_reset
             snap.reset_clock = self.last_reset_clock
@@ -180,6 +195,35 @@ class Engine(threading.Thread):
             self._execute(manual=True)
             self.prev_state = state
             return
+
+        # Optie: weeklimiet op en de client biedt een opgespaarde reset aan
+        if (state == C.ST_QUOTA
+                and planner.should_use_banked_reset(self.cfg, snap, self.balance, reader._now())):
+            if time.time() - getattr(self, "_banked_tried_at", 0) >= getattr(self, "_banked_backoff", 30 * 60):
+                self._banked_tried_at = time.time()
+                ok, detail = actor.use_banked_reset(self.log, self.cfg.locked_thread or snap.thread)
+                # Niets beschikbaar: niet elk half uur de instellingen openen
+                self._banked_backoff = (6 * 3600 if detail in ("no resets available",
+                                                                "only 5-hour resets available")
+                                        else 30 * 60)
+                if ok:
+                    # De limietgegevens lopen achter; niet meteen nog een reset verbruiken
+                    self._banked_backoff = 6 * 3600
+                self.log.write("info" if ok else "warn", "banked_reset", ok=ok, detail=detail)
+                lang = self.cfg.language
+                self._notify(i18n.t(lang, "app_title"),
+                             i18n.t(lang, "notify_banked_ok" if ok else "notify_banked_fail"),
+                             "info" if ok else "warn")
+                if ok:
+                    self.last_reset = None
+                    self.last_reset_clock = ""
+                    self.attempts = 0
+                    self.halted = False
+                    time.sleep(5)
+                    # Het oude limietbericht blijft in het gesprek staan: forceer hervatten
+                    self._execute(manual=True)
+                    self.prev_state = state
+                    return
 
         # 兜底：到了重置时刻，即使目标被判为受阻，也强试一次恢复
         if (self.goal_mode == C.GM_BLOCKED and self.last_reset is not None

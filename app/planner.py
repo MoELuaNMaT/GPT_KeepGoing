@@ -4,6 +4,30 @@
 from . import constants as C
 
 
+def api_reset_passed(reset_at, balance, now, window_minutes=300, tolerance_minutes=3):
+    """De banner toont alleen een tijd; de parser schuift een verstreken tijd
+    een venster door. Bevestigen de limietgegevens van de client dat precies
+    dat eerdere moment al voorbij is, dan geldt dat moment (en dus: nu hervatten).
+    Geeft het verstreken moment terug, of None."""
+    from datetime import datetime, timedelta
+    if reset_at is None or not isinstance(balance, dict) or not balance.get("ok"):
+        return None
+    raw = (balance.get("five_hour") or {}).get("resets_at")
+    if not raw:
+        return None
+    try:
+        api_at = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+    if api_at > now or reset_at <= api_at:
+        return None
+    gap = (reset_at - api_at).total_seconds() / 60.0
+    windows = round(gap / window_minutes)
+    if windows < 1 or abs(gap - windows * window_minutes) > tolerance_minutes:
+        return None
+    return api_at
+
+
 def is_waiting_label(name, offscreen=False):
     """是否是「等待你回答」的活动状态行。
 
@@ -97,6 +121,37 @@ def should_attempt(snap, now, expect_reset_at=None, grace_seconds=0):
     if expect_reset_at is None:
         return False
     return now >= expect_reset_at + _seconds(grace_seconds)
+
+
+def weekly_exhausted(balance, snap, now, min_wait_hours=None):
+    """Is de wekelijkse limiet op?
+
+    Twee onafhankelijke aanwijzingen, één is genoeg:
+    1) de lokale sessiegegevens melden voor het weekvenster (vrijwel) 0% over;
+    2) de client noemt een resetmoment dat verder weg ligt dan een 5-uursvenster
+       kan zijn.
+    """
+    from datetime import timedelta
+    hours = C.WEEKLY_MIN_WAIT_HOURS if min_wait_hours is None else min_wait_hours
+    week = (balance or {}).get("weekly") if (balance or {}).get("ok") else None
+    if week and week.get("remaining_percent") is not None and week["remaining_percent"] <= 1.0:
+        return True
+    if snap.quota_msgs and snap.reset_at is not None:
+        return snap.reset_at - now >= timedelta(hours=hours)
+    return False
+
+
+def should_use_banked_reset(cfg, snap, balance, now):
+    """Optie aan, het gesprek staat op de limiet, en het is de weeklimiet.
+
+    De reset zelf wordt gezocht in het limietvenster of, als dat er niet is,
+    in Instellingen > Gebruik en facturering.
+    """
+    if not getattr(cfg, "use_banked_reset", False):
+        return False
+    if not snap.banked_reset_offer and not snap.quota_msgs:
+        return False
+    return weekly_exhausted(balance, snap, now)
 
 
 def is_stale(snap, now, cfg):
